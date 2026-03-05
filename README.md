@@ -73,8 +73,8 @@ make setup
 5. **Run unit tests**:
 
 ```bash
-make test
-# equivalent: PYTHONPATH=./src .venv/bin/python -m pytest -v
+pytest -v
+# optional via Makefile: make test
 # all tests should pass
 ```
 
