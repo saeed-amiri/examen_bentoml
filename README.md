@@ -21,7 +21,7 @@ examen_bentoml/
 ├── tests/
 │   └── test_endpoints.py  # unit tests (pytest)
 ├── bentofile.yaml         # BentoML config (bento build)
-├── bento_image.tar        # docker image archive of the bento
+├── admission_service.tar  # docker image archive of the bento
 ├── requirements.txt       # development dependencies
 ├── Makefile               # shortcut commands
 └── README.md              # this file
@@ -40,7 +40,7 @@ examen_bentoml/
 
 ## Evaluation workflow (recommended)
 
-> The reviewer will have a **Docker image** (`bento_image.tar`) and the structure to run tests:  
+> The reviewer will have a **Docker image** (`admission_service.tar`) and the structure to run tests:  
 > - `tests/test_endpoints.py`  
 > - `Makefile`  
 > - `requirements.txt`  
@@ -52,7 +52,7 @@ examen_bentoml/
 2. **Load the Docker image**:
 ```bash
 make restore
-# equivalent: docker load -i bento_image.tar
+# equivalent: docker load -i admission_service.tar
 ````
 
 3. **Run the API**:
@@ -74,9 +74,11 @@ make setup
 
 ```bash
 make test
-# equivalent: .venv/bin/pytest -v tests/test_endpoints.py
+# equivalent: PYTHONPATH=./src .venv/bin/python -m pytest -v
 # all tests should pass
 ```
+
+> Note: tests call the running API over HTTP, so start the container (`make run`) before running tests.
 
 > The **Make targets** exist to make the validation process easier.
 > You can run the raw commands if you prefer.

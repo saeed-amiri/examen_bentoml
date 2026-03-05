@@ -1,27 +1,35 @@
+"""Endpoint tests for a running admission service container.
+
+Expected flow:
+1) Start the API container (for example: `make run`).
+2) Run `pytest -v` from a Python environment with dependencies installed.
+"""
+
 import os
 import time
-import datetime as dt
+from datetime import datetime, timedelta, timezone
+
 import jwt
 import pytest
 import requests
 
-# ========================
-# Configuration
-# ========================
-BASE_URL = os.getenv("ADMISSION_BASE_URL", "http://127.0.0.1:3000")
 
+# ==========
+# I. Congigs and setups
+# ==========
+
+
+BASE_URL = os.getenv("ADMISSION_BASE_URL", "http://127.0.0.1:3000")
 LOGIN_URL = f"{BASE_URL}/login"
 PREDICT_URL = f"{BASE_URL}/v1/models/admission_lr/predict"
 
-# Use a longer key to avoid InsecureKeyLengthWarning (min 32 chars for HS256)
-JWT_SECRET = os.getenv("TEST_JWT_SECRET", "my_super_secret_key_that_is_at_least_32_characters_long")
+# Keep this configurable for enviromnents where the service secret difers.
+JWT_SECRET = os.getenv(
+    "TEST_JWT_SECRET",
+    "my_super_secret_key_that_is_at_least_32_characters_long",
+)
 JWT_ALGORITHM = "HS256"
 
-# ========================
-# Test data - FIXED STRUCTURES
-# ========================
-
-# Wrap in "credentials" key because service argument name is 'credentials'
 VALID_CREDENTIALS = {
     "credentials": {
         "username": "admin",
@@ -31,78 +39,140 @@ VALID_CREDENTIALS = {
 
 INVALID_CREDENTIALS = {
     "credentials": {
-        "username": "wrong",
+        "username": "admin",
         "password": "wrong",
     }
 }
 
-# Wrap in "data" key because service argument name is 'data'
 VALID_INPUT = {
     "data": {
-        "gre_score": 320,
-        "toefl_score": 110,
-        "university_rating": 4,
-        "sop": 4.0,
-        "lor": 4.0,
-        "cgpa": 9.0,
+        "gre_score": 330,
+        "toefl_score": 115,
+        "university_rating": 5,
+        "sop": 4.5,
+        "lor": 4.5,
+        "cgpa": 9.5,
         "research": 1,
     }
 }
 
 INVALID_INPUT_MISSING_FIELD = {
     "data": {
-        "toefl_score": 110,
-        "university_rating": 4,
-        "sop": 4.0,
-        "lor": 4.0,
-        "cgpa": 9.0,
+        # Missing required field: gre_score
+        "toefl_score": 115,
+        "university_rating": 5,
+        "sop": 4.5,
+        "lor": 4.5,
+        "cgpa": 9.5,
         "research": 1,
     }
 }
 
-# ========================
-# Fixtures
-# ========================
+
+@pytest.fixture(scope="session", autouse=True)
+def wait_for_service_ready():
+    """Wait briefly for the containerized API to become reachable."""
+    last_error = None
+    for _ in range(20):
+        try:
+            response = requests.post(LOGIN_URL, json=INVALID_CREDENTIALS, timeout=2)
+            if response.status_code in (200, 401, 400, 422):
+                return
+        except requests.RequestException as exc:
+            last_error = exc
+        time.sleep(1)
+
+    pytest.fail(
+        "Service is not reachable. Start the container first (example: `make run`). "
+        f"Last error: {last_error}"
+    )
+
+
 @pytest.fixture(scope="session")
 def token() -> str:
     """Retrieve a valid JWT token from the login endpoint."""
-    for _ in range(5):
-        try:
-            response = requests.post(LOGIN_URL, json=VALID_CREDENTIALS, timeout=3)
-            if response.status_code == 200:
-                return response.json()["token"]
-        except requests.exceptions.RequestException:
-            pass
-        time.sleep(1)
-    pytest.fail("Unable to retrieve JWT token from /login endpoint")
+    response = requests.post(LOGIN_URL, json=VALID_CREDENTIALS, timeout=5)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert "token" in body
+    return body["token"]
+
 
 @pytest.fixture(scope="session")
-def headers(token: str) -> dict:
+def auth_headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
-# ========================
-# Tests
-# ========================
+
+# ==========
+# 1. Login API Tests
+# ==========
+
 
 def test_login_success():
-    response = requests.post(LOGIN_URL, json=VALID_CREDENTIALS)
+    """Verify API returns a valid JWT token for correct credentials."""
+    response = requests.post(LOGIN_URL, json=VALID_CREDENTIALS, timeout=5)
     assert response.status_code == 200
     assert "token" in response.json()
 
-def test_login_failure():
-    response = requests.post(LOGIN_URL, json=INVALID_CREDENTIALS)
+
+def test_login_invalid_credentials():
+    """Verify API returns 401 for incorrect credentials."""
+    response = requests.post(LOGIN_URL, json=INVALID_CREDENTIALS, timeout=5)
     assert response.status_code == 401
 
-def test_auth_valid_token(headers: dict):
-    response = requests.post(PREDICT_URL, json=VALID_INPUT, headers=headers)
+
+# ==========
+# 2. JWT Authentication Tests
+# ==========
+
+
+def test_predict_auth_missing_token():
+    """Verify 401 if JWT token is missing."""
+    response = requests.post(PREDICT_URL, json=VALID_INPUT, timeout=5)
+    assert response.status_code == 401
+
+
+def test_predict_auth_invalid_token():
+    """Verify 401 if JWT token is malformed or invalid."""
+    headers = {"Authorization": "Bearer not.a.valid.jwt"}
+    response = requests.post(PREDICT_URL, headers=headers, json=VALID_INPUT, timeout=5)
+    assert response.status_code == 401
+
+
+def test_predict_auth_expired_token():
+    """Verify 401 if JWT token has expired."""
+    exp = datetime.now(timezone.utc) - timedelta(hours=1)
+    token = jwt.encode({"sub": "admin", "exp": exp}, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.post(PREDICT_URL, headers=headers, json=VALID_INPUT, timeout=5)
+    assert response.status_code == 401
+
+
+
+def test_predict_auth_valid_token(auth_headers: dict):
+    """Verify authenmtication succeeds with a valid JWT token."""
+    response = requests.post(PREDICT_URL, headers=auth_headers, json=VALID_INPUT, timeout=5)
     assert response.status_code == 200
     assert "prediction" in response.json()
 
-def test_predict_invalid_payload(headers: dict):
-    # Missing 'gre_score' inside 'data'
-    response = requests.post(PREDICT_URL, json=INVALID_INPUT_MISSING_FIELD, headers=headers)
-    assert response.status_code in (400, 422)
 
-def test_auth_missing_token():
-    response = requests.post(PREDICT_URL, json=VALID_INPUT)
-    assert response.status_code == 401
+# ==========
+# 3. Prediction API Tests
+# ==========
+
+def test_predict_success(auth_headers: dict):
+    """Verify valid prediction for correct input data."""
+    response = requests.post(PREDICT_URL, headers=auth_headers, json=VALID_INPUT, timeout=5)
+    assert response.status_code == 200
+    assert "prediction" in response.json()
+
+
+def test_predict_invalid_input_data(auth_headers: dict):
+    """Verify API returns an error for invalid input data."""
+    response = requests.post(
+        PREDICT_URL,
+        headers=auth_headers,
+        json=INVALID_INPUT_MISSING_FIELD,
+        timeout=5,
+    )
+    assert response.status_code in (400, 422)

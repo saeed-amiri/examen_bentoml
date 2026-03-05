@@ -6,7 +6,7 @@ import jwt
 import numpy as np
 import pandas as pd
 import bentoml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from starlette.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -65,8 +65,8 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
     """Middleware verifying JWT token for protected routes."""
 
     async def dispatch(self, request, call_next):
-        if request.url.path == "/v1/models/admission_lr/predict":
-
+        # Use endswith to be safe against service prefixes
+        if "/predict" in request.url.path:
             logging.info("JWT middleware triggered on %s", request.url.path)
 
             token = request.headers.get("Authorization")
@@ -156,14 +156,14 @@ class AdmissionService:
     # ==========
     # Login endpoint
     # ==========
+@bentoml.service(name="admission_service") # Explicit name
+class AdmissionService:
+    def __init__(self):
+        model_ref = bentoml.models.get("admission_lr:latest")
+        self.sklearn_model = bentoml.sklearn.load_model(model_ref)
+
     @bentoml.api(route="/login")
     async def login(self, credentials: LoginInput, ctx: bentoml.Context) -> dict:
-        """
-        Authenticate user and return a JWT token.
-        
-        Note: By typing 'credentials' as LoginInput, BentoML automatically 
-        validates the request body against the Pydantic model.
-        """
         if USERS.get(credentials.username) != credentials.password:
             ctx.response.status_code = 401
             return {"detail": "Invalid credentials"}
@@ -171,33 +171,10 @@ class AdmissionService:
         token = create_jwt_token(credentials.username)
         return {"token": token}
 
-    # ==========
-    # Prediction endpoint
-    # ==========
     @bentoml.api(route="/v1/models/admission_lr/predict")
     async def predict(self, data: AdmissionInput, ctx: bentoml.Context) -> dict:
-        """
-        Predict admission probability.
-        
-        Note: By typing 'data' as AdmissionInput, BentoML automatically 
-        validates the request body.
-        """
-        # Accessing fields directly from the Pydantic object
-        df = pd.DataFrame(
-            [
-                {
-                    "gre_score": data.gre_score,
-                    "toefl_score": data.toefl_score,
-                    "university_rating": data.university_rating,
-                    "sop": data.sop,
-                    "lor": data.lor,
-                    "cgpa": data.cgpa,
-                    "research": data.research,
-                }
-            ],
-            columns=TRAIN_COLS,
-        )
-
+        # data is already a validated Pydantic object here
+        df = pd.DataFrame([data.model_dump()], columns=TRAIN_COLS)
         pred = self.sklearn_model.predict(df)
         return {"prediction": np.asarray(pred).reshape(-1).astype(float).tolist()}
 
