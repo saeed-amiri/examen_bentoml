@@ -1,0 +1,28 @@
+service: "src.service:AdmissionService"
+description: "Predict student admission probability using LinearRegression and StandardScaler"
+
+labels:
+  owner: "datascientest"
+  project: "admissions-prediction"
+  stage: "exam"
+
+# include source code for the service
+include:
+  - "src/*.py"
+
+# include the traned model from BentoML model store
+models:
+  - "admission_lr:1.0.0"
+
+python:
+  packages:
+    - numpy==2.4.1
+    - pandas==2.3.3
+    - scikit-learn==1.8.0
+    - pyjwt==2.11.0
+    - setuptools==82.0.0
+
+# system packages required for scikit-learn/OpenMP
+docker:
+  system_packages:
+    - libgomp1
