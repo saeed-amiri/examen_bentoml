@@ -6,9 +6,10 @@ import jwt
 import numpy as np
 import pandas as pd
 import bentoml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+
 
 # ==========
 # Warning configuration
@@ -18,21 +19,25 @@ warnings.filterwarnings(
     message="`bentoml.io` is deprecated",
     category=Warning,
 )
+
 warnings.filterwarnings(
     "ignore",
     message="`bentoml.Service` is deprecated",
     category=Warning,
 )
+
 warnings.filterwarnings(
     "ignore",
     message="pkg_resources is deprecated as an API",
     category=Warning,
 )
 
+
 # ==========
 # Logging
 # ==========
 logging.basicConfig(level=logging.INFO)
+
 
 # ==========
 # JWT configuration
@@ -57,6 +62,7 @@ TRAIN_COLS = [
     "cgpa",
     "research",
 ]
+
 
 # ==========
 # JWT Middleware
@@ -138,7 +144,6 @@ class AdmissionInput(BaseModel):
 
 class LoginInput(BaseModel):
     """Input schema for authentication."""
-
     username: str = Field(..., description="Username for authentication")
     password: str = Field(..., description="Password for authentication")
 
@@ -153,10 +158,11 @@ class AdmissionService:
         model_ref = bentoml.models.get("admission_lr:latest")
         self.sklearn_model = bentoml.sklearn.load_model(model_ref)
 
-    # ==========
-    # Login endpoint
-    # ==========
-@bentoml.service(name="admission_service") # Explicit name
+
+# ==========
+# Login endpoint
+# ==========
+@bentoml.service(name="admission_service")
 class AdmissionService:
     def __init__(self):
         model_ref = bentoml.models.get("admission_lr:latest")
@@ -183,8 +189,6 @@ class AdmissionService:
 # Configure Service Middleware & Alias
 # ==========
 
-# Add the middleware to the Service class
 AdmissionService.add_asgi_middleware(JWTAuthMiddleware)
 
-# Alias for backward compatibility with bentoml.yml / Makefile
 admission_service = AdmissionService
